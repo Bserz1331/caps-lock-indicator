@@ -1,5 +1,5 @@
 # Compatibility launcher for CapsLockIndicator.exe.
-$exePath = Join-Path $PSScriptRoot 'CapsLockIndicator.exe'
+$exePath = Join-Path $PSScriptRoot '..\CapsLockIndicator.exe'
 
 if (-not (Test-Path -LiteralPath $exePath)) {
     Add-Type -AssemblyName PresentationFramework
@@ -13,3 +13,4 @@ if (-not (Test-Path -LiteralPath $exePath)) {
 }
 
 Start-Process -FilePath $exePath
+

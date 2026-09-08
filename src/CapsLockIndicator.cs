@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using Microsoft.Win32;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
@@ -21,10 +22,14 @@ internal sealed class CapsLockIndicatorContext : ApplicationContext
     private readonly NotifyIcon notifyIcon;
     private readonly ContextMenuStrip menu;
     private readonly ToolStripMenuItem statusItem;
+    private readonly ToolStripMenuItem startupItem;
     private readonly Timer timer;
     private Icon currentIcon;
     private bool? lastState;
     private bool isExiting;
+
+    private const string StartupRegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    private const string StartupValueName = "CapsLockIndicator";
 
     public CapsLockIndicatorContext()
     {
@@ -38,8 +43,16 @@ internal sealed class CapsLockIndicatorContext : ApplicationContext
         refreshItem.Click += delegate { UpdateState(); };
         menu.Items.Add(refreshItem);
 
-        ToolStripMenuItem exitItem = new ToolStripMenuItem("\u7d50\u675f Caps Lock \u6307\u793a\u5668");
-        exitItem.Click += delegate { ExitApplication(); };
+        startupItem = new ToolStripMenuItem("\u958b\u6a5f\u555f\u52d5");
+        startupItem.Checked = IsStartupEnabled();
+        startupItem.Click += delegate
+        {
+            bool enabled = !startupItem.Checked;
+            if (SetStartupEnabled(enabled)) startupItem.Checked = enabled;
+        };
+        menu.Items.Add(startupItem);
+        menu.Items.Add(new ToolStripSeparator());
+
         ToolStripMenuItem supportItem = new ToolStripMenuItem("\u652f\u6301\u958b\u767c\u2026");
         supportItem.Click += delegate
         {
@@ -48,8 +61,11 @@ internal sealed class CapsLockIndicatorContext : ApplicationContext
                 dialog.ShowDialog();
             }
         };
-        menu.Items.Insert(3, supportItem);
-        menu.Items.Insert(4, new ToolStripSeparator());
+        menu.Items.Add(supportItem);
+        menu.Items.Add(new ToolStripSeparator());
+
+        ToolStripMenuItem exitItem = new ToolStripMenuItem("\u7d50\u675f Caps Lock \u6307\u793a\u5668");
+        exitItem.Click += delegate { ExitApplication(); };
         menu.Items.Add(exitItem);
 
         notifyIcon = new NotifyIcon();
@@ -126,6 +142,58 @@ internal sealed class CapsLockIndicatorContext : ApplicationContext
 
     [DllImport("user32.dll", CharSet = CharSet.Auto)]
     private static extern bool DestroyIcon(IntPtr handle);
+
+    private static bool IsStartupEnabled()
+    {
+        try
+        {
+            using (RegistryKey key = Registry.CurrentUser.OpenSubKey(StartupRegistryKey, false))
+            {
+                if (key == null) return false;
+                object value = key.GetValue(StartupValueName);
+                return String.Equals(Convert.ToString(value), GetStartupCommand(), StringComparison.OrdinalIgnoreCase);
+            }
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool SetStartupEnabled(bool enabled)
+    {
+        try
+        {
+            using (RegistryKey key = Registry.CurrentUser.CreateSubKey(StartupRegistryKey))
+            {
+                if (key == null) throw new InvalidOperationException("無法存取目前使用者的開機啟動設定。");
+
+                if (enabled)
+                {
+                    key.SetValue(StartupValueName, GetStartupCommand(), RegistryValueKind.String);
+                }
+                else
+                {
+                    key.DeleteValue(StartupValueName, false);
+                }
+            }
+            return true;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                "無法更新開機啟動設定。" + Environment.NewLine + ex.Message,
+                "Caps Lock 指示器",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return false;
+        }
+    }
+
+    private static string GetStartupCommand()
+    {
+        return "\"" + Application.ExecutablePath + "\"";
+    }
 
     private void ExitApplication()
     {
