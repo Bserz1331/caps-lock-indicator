@@ -346,4 +346,3 @@ internal sealed class SupportDialog : Form
         base.Dispose(disposing);
     }
 }
-

@@ -13,4 +13,3 @@ if (-not (Test-Path -LiteralPath $exePath)) {
 }
 
 Start-Process -FilePath $exePath
-
