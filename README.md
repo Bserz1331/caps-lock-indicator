@@ -1,39 +1,42 @@
-# Caps Lock 右下角指示器
+# Caps Lock Indicator
 
-這是一個免安裝的 Windows `.exe` 小工具，不需要 PowerShell 或 .NET SDK。
+A portable Windows `.exe` utility that shows whether Caps Lock is enabled. It runs in the notification area and does not require PowerShell or the .NET SDK.
 
-## 先開哪個？
+## Which file should I open?
 
-- 要使用工具：雙擊根目錄的 `CapsLockIndicator.exe`
-- 另一種啟動方式：雙擊 `啟動 Caps Lock 指示器.bat`
-- 其他檔案是原始碼、啟動腳本與圖示，平常不需要開啟
+- To use the utility, double-click `CapsLockIndicator.exe`.
+- To launch it from a clearly named shortcut script, double-click `Start Caps Lock Indicator.bat`.
+- Traditional Chinese instructions are available in `README.zh-TW.md`.
+- The other files are source code, scripts, and image assets.
 
-## 資料夾結構
+## Features
+
+- Runs quietly in the Windows notification area.
+- The tray icon shows a large `A` on a green keycap when Caps Lock is on, and a lowercase `a` on a gray keycap when it is off.
+- Pressing Caps Lock shows a centered status overlay on the active monitor.
+- The overlay stays on top, lets mouse clicks pass through, and hides automatically after the configured duration.
+- The default overlay is 80% transparent (about 20% window opacity) and remains visible enough to find.
+- Right-click the tray icon and choose `Overlay settings...` to customize the on/off colors, transparency, and display duration from 1 to 5 seconds.
+- Right-click the tray icon and open `Language` to choose `System default`, `Traditional Chinese`, or `English`. The default follows the Windows display language.
+- Right-click the tray icon and choose `Check for updates` to read version information from GitHub. The utility never downloads or installs updates automatically.
+- Right-click the tray icon and enable `Start with Windows` to launch it automatically after the current Windows user signs in. This setting does not require administrator permission.
+- Right-click the tray icon and choose `Support development...` to open the voluntary support options.
+
+## Folder layout
 
 ```text
 CapsLock/
-├─ CapsLockIndicator.exe              ← 主程式
-├─ 啟動 Caps Lock 指示器.bat          ← 快速啟動
-├─ README.md                           ← 本說明
-├─ version.json                        ← 更新檢查用版本資訊
-├─ src/CapsLockIndicator.cs            ← 原始碼
-├─ scripts/CapsLockIndicator.ps1       ← PowerShell 相容啟動腳本
-└─ assets/                             ← 圖示與預覽圖
+├─ CapsLockIndicator.exe              <- Main application
+├─ Start Caps Lock Indicator.bat      <- English launcher
+├─ 啟動 Caps Lock 指示器.bat          <- Original launcher
+├─ README.md                           <- English documentation
+├─ README.zh-TW.md                     <- Traditional Chinese documentation
+├─ version.json                        <- Update-check manifest
+├─ src/CapsLockIndicator.cs            <- Source code
+├─ scripts/CapsLockIndicator.ps1       <- PowerShell-compatible launcher
+└─ assets/                             <- Icon and preview image
 ```
 
-## 使用方式
+## Notes
 
-雙擊 `CapsLockIndicator.exe`，或雙擊 `啟動 Caps Lock 指示器.bat`。
-
-- 平時只顯示在 Windows 工作列右下角的通知區；按下 Caps Lock 時會在目前螢幕中央顯示狀態提示
-- 通知區圖示顯示大寫 `A`（綠底）代表 Caps Lock 開啟，小寫 `a`（灰底）代表關閉
-- 中央狀態提示預設為 80% 透明（視窗不透明度約 20%），固定在最前面，預設 3 秒後自動關閉，而且滑鼠可以穿透
-- 將滑鼠移到圖示上，可看到「Caps Lock：開啟／關閉」提示
-- 在通知區圖示上按右鍵，可重新整理狀態或結束工具
-- 在通知區圖示上按右鍵，開啟「浮動提示設定…」即可調整開啟／關閉顏色、透明度與顯示時間（1～5 秒）；設定會保存到目前 Windows 使用者
-- 在通知區圖示上按右鍵，選擇「檢查更新」即可從 GitHub 取得版本資訊；程式不會自動下載或安裝
-- 在通知區圖示上按右鍵，勾選「開機啟動」即可讓工具在登入 Windows 後自動執行；再次點擊可取消
-- 如果圖示被 Windows 收進 `^` 隱藏圖示區，可將它拖曳到工作列上
-
-「開機啟動」只會設定目前 Windows 使用者，不需要管理員權限。
-如果 Windows 顯示 SmartScreen 提示，請先選擇「其他資訊」，再選擇「仍要執行」。這是未經數位簽章的本機工具常見提示。
+If Windows shows a SmartScreen warning, select `More info` and then `Run anyway`. This is a common warning for an unsigned local utility.

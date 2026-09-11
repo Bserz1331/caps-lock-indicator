@@ -5,6 +5,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
+using System.Globalization;
 using System.IO;
 using Microsoft.Win32;
 using System.Net;
@@ -28,11 +29,108 @@ internal static class Program
 
 internal static class AppInfo
 {
-    public const string CurrentVersion = "1.2.0";
+    public const string CurrentVersion = "1.3.0";
     public const string GitHubRepositoryUrl = "https://github.com/Bserz1331/caps-lock-indicator";
     public const string VersionManifestUrl = "https://raw.githubusercontent.com/Bserz1331/caps-lock-indicator/main/version.json";
     public const string LatestReleaseApiUrl = "https://api.github.com/repos/Bserz1331/caps-lock-indicator/releases/latest";
     public const string LatestReleasePageUrl = "https://github.com/Bserz1331/caps-lock-indicator/releases/latest";
+}
+
+internal enum LanguagePreference
+{
+    SystemDefault,
+    TraditionalChinese,
+    English
+}
+
+internal static class LanguageSettings
+{
+    private const string RegistryPath = @"Software\CapsLockIndicator\Preferences";
+    private const string LanguageValueName = "Language";
+
+    public static LanguagePreference Load()
+    {
+        try
+        {
+            using (RegistryKey key = Registry.CurrentUser.OpenSubKey(RegistryPath, false))
+            {
+                if (key == null) return LanguagePreference.SystemDefault;
+                string value = Convert.ToString(key.GetValue(LanguageValueName));
+                if (String.Equals(value, "zh-TW", StringComparison.OrdinalIgnoreCase))
+                    return LanguagePreference.TraditionalChinese;
+                if (String.Equals(value, "en-US", StringComparison.OrdinalIgnoreCase))
+                    return LanguagePreference.English;
+            }
+        }
+        catch
+        {
+            // An unavailable preference should never prevent the tray tool from starting.
+        }
+        return LanguagePreference.SystemDefault;
+    }
+
+    public static bool Save(LanguagePreference preference)
+    {
+        try
+        {
+            using (RegistryKey key = Registry.CurrentUser.CreateSubKey(RegistryPath))
+            {
+                if (key == null) return false;
+                string value = preference == LanguagePreference.TraditionalChinese
+                    ? "zh-TW"
+                    : preference == LanguagePreference.English ? "en-US" : "system";
+                key.SetValue(LanguageValueName, value, RegistryValueKind.String);
+            }
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+}
+
+internal static class AppText
+{
+    public static bool IsChinese { get; private set; }
+
+    public static string FontFamily
+    {
+        get { return IsChinese ? "Microsoft JhengHei UI" : "Segoe UI"; }
+    }
+
+    public static void SetLanguage(LanguagePreference preference)
+    {
+        if (preference == LanguagePreference.TraditionalChinese)
+        {
+            IsChinese = true;
+            return;
+        }
+
+        if (preference == LanguagePreference.English)
+        {
+            IsChinese = false;
+            return;
+        }
+
+        CultureInfo systemCulture = CultureInfo.InstalledUICulture;
+        if (systemCulture == null || String.IsNullOrEmpty(systemCulture.Name))
+            systemCulture = CultureInfo.CurrentUICulture;
+        IsChinese = systemCulture != null &&
+            String.Equals(systemCulture.TwoLetterISOLanguageName, "zh", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static string Get(string chinese, string english)
+    {
+        return IsChinese ? chinese : english;
+    }
+
+    public static string State(bool isOn)
+    {
+        return IsChinese
+            ? (isOn ? "Caps Lock：開啟" : "Caps Lock：關閉")
+            : (isOn ? "Caps Lock: On" : "Caps Lock: Off");
+    }
 }
 
 internal sealed class OverlaySettings
@@ -169,7 +267,16 @@ internal sealed class CapsLockIndicatorContext : ApplicationContext
     private readonly NotifyIcon notifyIcon;
     private readonly ContextMenuStrip menu;
     private readonly ToolStripMenuItem statusItem;
+    private readonly ToolStripMenuItem refreshItem;
+    private readonly ToolStripMenuItem settingsItem;
+    private readonly ToolStripMenuItem updateItem;
     private readonly ToolStripMenuItem startupItem;
+    private readonly ToolStripMenuItem languageItem;
+    private readonly ToolStripMenuItem systemLanguageItem;
+    private readonly ToolStripMenuItem chineseLanguageItem;
+    private readonly ToolStripMenuItem englishLanguageItem;
+    private readonly ToolStripMenuItem supportItem;
+    private readonly ToolStripMenuItem exitItem;
     private readonly Control uiInvoker;
     private readonly OverlaySettings overlaySettings;
     private readonly CapsLockOverlay overlay;
@@ -177,12 +284,15 @@ internal sealed class CapsLockIndicatorContext : ApplicationContext
     private Icon currentIcon;
     private bool? lastState;
     private bool isExiting;
+    private LanguagePreference languagePreference;
 
     private const string StartupRegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string StartupValueName = "CapsLockIndicator";
 
     public CapsLockIndicatorContext()
     {
+        languagePreference = LanguageSettings.Load();
+        AppText.SetLanguage(languagePreference);
         overlaySettings = OverlaySettings.Load();
         uiInvoker = new Control();
         uiInvoker.CreateControl();
@@ -193,19 +303,31 @@ internal sealed class CapsLockIndicatorContext : ApplicationContext
         menu.Items.Add(statusItem);
         menu.Items.Add(new ToolStripSeparator());
 
-        ToolStripMenuItem refreshItem = new ToolStripMenuItem("\u91cd\u65b0\u6574\u7406\u72c0\u614b");
+        refreshItem = new ToolStripMenuItem();
         refreshItem.Click += delegate { UpdateState(); };
         menu.Items.Add(refreshItem);
 
-        ToolStripMenuItem settingsItem = new ToolStripMenuItem("\u6d6e\u52d5\u63d0\u793a\u8a2d\u5b9a\u2026");
+        settingsItem = new ToolStripMenuItem();
         settingsItem.Click += delegate { ShowOverlaySettings(); };
         menu.Items.Add(settingsItem);
 
-        ToolStripMenuItem updateItem = new ToolStripMenuItem("\u6aa2\u67e5\u66f4\u65b0");
+        languageItem = new ToolStripMenuItem();
+        systemLanguageItem = new ToolStripMenuItem();
+        chineseLanguageItem = new ToolStripMenuItem();
+        englishLanguageItem = new ToolStripMenuItem();
+        systemLanguageItem.Click += delegate { ChangeLanguage(LanguagePreference.SystemDefault); };
+        chineseLanguageItem.Click += delegate { ChangeLanguage(LanguagePreference.TraditionalChinese); };
+        englishLanguageItem.Click += delegate { ChangeLanguage(LanguagePreference.English); };
+        languageItem.DropDownItems.Add(systemLanguageItem);
+        languageItem.DropDownItems.Add(chineseLanguageItem);
+        languageItem.DropDownItems.Add(englishLanguageItem);
+        menu.Items.Add(languageItem);
+
+        updateItem = new ToolStripMenuItem();
         updateItem.Click += delegate { CheckForUpdates(); };
         menu.Items.Add(updateItem);
 
-        startupItem = new ToolStripMenuItem("\u958b\u6a5f\u555f\u52d5");
+        startupItem = new ToolStripMenuItem();
         startupItem.Checked = IsStartupEnabled();
         startupItem.Click += delegate
         {
@@ -215,7 +337,7 @@ internal sealed class CapsLockIndicatorContext : ApplicationContext
         menu.Items.Add(startupItem);
         menu.Items.Add(new ToolStripSeparator());
 
-        ToolStripMenuItem supportItem = new ToolStripMenuItem("\u652f\u6301\u958b\u767c\u2026");
+        supportItem = new ToolStripMenuItem();
         supportItem.Click += delegate
         {
             using (SupportDialog dialog = new SupportDialog())
@@ -226,7 +348,7 @@ internal sealed class CapsLockIndicatorContext : ApplicationContext
         menu.Items.Add(supportItem);
         menu.Items.Add(new ToolStripSeparator());
 
-        ToolStripMenuItem exitItem = new ToolStripMenuItem("\u7d50\u675f Caps Lock \u6307\u793a\u5668");
+        exitItem = new ToolStripMenuItem();
         exitItem.Click += delegate { ExitApplication(); };
         menu.Items.Add(exitItem);
 
@@ -235,6 +357,7 @@ internal sealed class CapsLockIndicatorContext : ApplicationContext
         notifyIcon.ContextMenuStrip = menu;
         notifyIcon.DoubleClick += delegate { UpdateState(); };
         notifyIcon.Visible = true;
+        UpdateMenuText();
 
         timer = new WinFormsTimer();
         timer.Interval = 100;
@@ -242,6 +365,46 @@ internal sealed class CapsLockIndicatorContext : ApplicationContext
         timer.Start();
 
         UpdateState();
+    }
+
+    private void ChangeLanguage(LanguagePreference preference)
+    {
+        languagePreference = preference;
+        AppText.SetLanguage(languagePreference);
+        if (!LanguageSettings.Save(languagePreference))
+        {
+            MessageBox.Show(
+                AppText.Get("語言已套用，但無法保存設定。", "The language was changed, but the preference could not be saved."),
+                AppText.Get("Caps Lock 指示器", "Caps Lock Indicator"),
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+        UpdateMenuText();
+    }
+
+    private void UpdateMenuText()
+    {
+        refreshItem.Text = AppText.Get("重新整理狀態", "Refresh status");
+        settingsItem.Text = AppText.Get("浮動提示設定...", "Overlay settings...");
+        updateItem.Text = AppText.Get("檢查更新", "Check for updates");
+        startupItem.Text = AppText.Get("開機啟動", "Start with Windows");
+        supportItem.Text = AppText.Get("支持開發...", "Support development...");
+        exitItem.Text = AppText.Get("結束 Caps Lock 指示器", "Exit Caps Lock Indicator");
+        languageItem.Text = AppText.Get("語言", "Language");
+        systemLanguageItem.Text = AppText.Get("跟隨系統", "System default");
+        chineseLanguageItem.Text = AppText.Get("繁體中文", "Traditional Chinese");
+        englishLanguageItem.Text = "English";
+        systemLanguageItem.Checked = languagePreference == LanguagePreference.SystemDefault;
+        chineseLanguageItem.Checked = languagePreference == LanguagePreference.TraditionalChinese;
+        englishLanguageItem.Checked = languagePreference == LanguagePreference.English;
+        UpdateStatusText(Control.IsKeyLocked(Keys.CapsLock));
+    }
+
+    private void UpdateStatusText(bool isOn)
+    {
+        string text = AppText.State(isOn);
+        if (notifyIcon != null) notifyIcon.Text = text;
+        if (statusItem != null) statusItem.Text = text;
     }
 
     private void UpdateState()
@@ -259,8 +422,7 @@ internal sealed class CapsLockIndicatorContext : ApplicationContext
 
         currentIcon = CreateStatusIcon(isOn);
         notifyIcon.Icon = currentIcon;
-        notifyIcon.Text = isOn ? "Caps Lock\uff1a\u958b\u555f" : "Caps Lock\uff1a\u95dc\u9589";
-        statusItem.Text = isOn ? "Caps Lock\uff1a\u958b\u555f" : "Caps Lock\uff1a\u95dc\u9589";
+        UpdateStatusText(isOn);
 
         if (stateChanged) overlay.ShowForState(isOn, GetForegroundWindow());
     }
@@ -276,8 +438,10 @@ internal sealed class CapsLockIndicatorContext : ApplicationContext
             if (!overlaySettings.Save())
             {
                 MessageBox.Show(
-                    "設定已套用到目前執行中的工具，但無法保存到目前使用者設定。",
-                    "Caps Lock 指示器",
+                    AppText.Get(
+                        "設定已套用到目前執行中的工具，但無法保存到目前使用者設定。",
+                        "The settings were applied to the running app, but could not be saved for the current user."),
+                    AppText.Get("Caps Lock 指示器", "Caps Lock Indicator"),
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
             }
@@ -289,8 +453,8 @@ internal sealed class CapsLockIndicatorContext : ApplicationContext
         if (!UpdateChecker.TryCheckAsync(uiInvoker, ShowUpdateResult))
         {
             MessageBox.Show(
-                "更新檢查正在進行中，請稍候。",
-                "Caps Lock 指示器",
+                AppText.Get("更新檢查正在進行中，請稍候。", "An update check is already in progress. Please wait."),
+                AppText.Get("Caps Lock 指示器", "Caps Lock Indicator"),
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
         }
@@ -304,7 +468,7 @@ internal sealed class CapsLockIndicatorContext : ApplicationContext
         {
             MessageBox.Show(
                 result.ErrorMessage,
-                "檢查更新",
+                AppText.Get("檢查更新", "Check for updates"),
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Warning);
             return;
@@ -313,18 +477,26 @@ internal sealed class CapsLockIndicatorContext : ApplicationContext
         if (!result.UpdateAvailable)
         {
             MessageBox.Show(
-                "目前已是最新版本。" + Environment.NewLine +
-                "目前版本：" + result.CurrentVersion + Environment.NewLine +
-                "遠端版本：" + result.LatestVersion,
-                "檢查更新",
+                AppText.Get(
+                    "目前已是最新版本。" + Environment.NewLine +
+                    "目前版本：" + result.CurrentVersion + Environment.NewLine +
+                    "遠端版本：" + result.LatestVersion,
+                    "You are using the latest version." + Environment.NewLine +
+                    "Current version: " + result.CurrentVersion + Environment.NewLine +
+                    "Remote version: " + result.LatestVersion),
+                AppText.Get("檢查更新", "Check for updates"),
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
             return;
         }
 
-        string message = "發現新版本：" + result.LatestVersion + Environment.NewLine +
+        string message = AppText.Get(
+            "發現新版本：" + result.LatestVersion + Environment.NewLine +
             "目前版本：" + result.CurrentVersion + Environment.NewLine + Environment.NewLine +
-            "要開啟 GitHub 下載頁面嗎？";
+            "要開啟 GitHub 下載頁面嗎？",
+            "A new version is available: " + result.LatestVersion + Environment.NewLine +
+            "Current version: " + result.CurrentVersion + Environment.NewLine + Environment.NewLine +
+            "Would you like to open the GitHub download page?");
         if (!String.IsNullOrWhiteSpace(result.ReleaseNotes))
         {
             string notes = result.ReleaseNotes.Trim();
@@ -332,7 +504,7 @@ internal sealed class CapsLockIndicatorContext : ApplicationContext
             message += Environment.NewLine + Environment.NewLine + notes;
         }
 
-        if (MessageBox.Show(message, "檢查更新", MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
+        if (MessageBox.Show(message, AppText.Get("檢查更新", "Check for updates"), MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
         {
             OpenExternalUrl(result.DownloadUrl);
         }
@@ -428,7 +600,11 @@ internal sealed class CapsLockIndicatorContext : ApplicationContext
         {
             using (RegistryKey key = Registry.CurrentUser.CreateSubKey(StartupRegistryKey))
             {
-                if (key == null) throw new InvalidOperationException("無法存取目前使用者的開機啟動設定。");
+                if (key == null)
+                {
+                    throw new InvalidOperationException(
+                        AppText.Get("無法存取目前使用者的開機啟動設定。", "Unable to access the current user's startup settings."));
+                }
 
                 if (enabled)
                 {
@@ -444,8 +620,9 @@ internal sealed class CapsLockIndicatorContext : ApplicationContext
         catch (Exception ex)
         {
             MessageBox.Show(
-                "無法更新開機啟動設定。" + Environment.NewLine + ex.Message,
-                "Caps Lock 指示器",
+                AppText.Get("無法更新開機啟動設定。", "Unable to update startup settings.") +
+                    Environment.NewLine + ex.Message,
+                AppText.Get("Caps Lock 指示器", "Caps Lock Indicator"),
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Warning);
             return false;
@@ -482,8 +659,9 @@ internal sealed class CapsLockIndicatorContext : ApplicationContext
         catch (Exception ex)
         {
             MessageBox.Show(
-                "無法開啟瀏覽器。" + Environment.NewLine + url + Environment.NewLine + ex.Message,
-                "Caps Lock 指示器",
+                AppText.Get("無法開啟瀏覽器。", "Unable to open the browser.") +
+                    Environment.NewLine + url + Environment.NewLine + ex.Message,
+                AppText.Get("Caps Lock 指示器", "Caps Lock Indicator"),
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Warning);
         }
@@ -555,7 +733,9 @@ internal static class UpdateChecker
             }
             catch (Exception ex)
             {
-                result = UpdateCheckResult.Failure("無法檢查更新。" + Environment.NewLine + ex.Message);
+                result = UpdateCheckResult.Failure(
+                    AppText.Get("無法檢查更新。", "Unable to check for updates.") +
+                    Environment.NewLine + ex.Message);
             }
 
             try
@@ -604,16 +784,22 @@ internal static class UpdateChecker
         if (info == null)
         {
             return UpdateCheckResult.Failure(
-                "目前無法取得 GitHub 更新資訊。" + Environment.NewLine +
-                "請確認網路連線，或稍後再試。" + Environment.NewLine + Environment.NewLine +
-                "version.json：" + manifestError + Environment.NewLine +
-                "GitHub Release：" + releaseError);
+                AppText.Get(
+                    "目前無法取得 GitHub 更新資訊。" + Environment.NewLine +
+                    "請確認網路連線，或稍後再試。" + Environment.NewLine + Environment.NewLine +
+                    "version.json：" + manifestError + Environment.NewLine +
+                    "GitHub Release：" + releaseError,
+                    "Unable to retrieve update information from GitHub." + Environment.NewLine +
+                    "Check your network connection or try again later." + Environment.NewLine + Environment.NewLine +
+                    "version.json: " + manifestError + Environment.NewLine +
+                    "GitHub release: " + releaseError));
         }
 
         Version latestVersion;
         if (!TryParseVersion(info.Version, out latestVersion))
         {
-            return UpdateCheckResult.Failure("GitHub 的版本資訊格式不正確：" + info.Version);
+            return UpdateCheckResult.Failure(
+                AppText.Get("GitHub 的版本資訊格式不正確：", "GitHub returned an invalid version: ") + info.Version);
         }
 
         return UpdateCheckResult.Success(
@@ -627,7 +813,10 @@ internal static class UpdateChecker
     {
         Dictionary<string, object> values = Deserialize(json);
         string version = ReadString(values, "version");
-        if (String.IsNullOrWhiteSpace(version)) throw new FormatException("缺少 version 欄位。");
+        if (String.IsNullOrWhiteSpace(version))
+        {
+            throw new FormatException(AppText.Get("缺少 version 欄位。", "The version field is missing."));
+        }
 
         return new RemoteVersionInfo
         {
@@ -641,7 +830,11 @@ internal static class UpdateChecker
     {
         Dictionary<string, object> values = Deserialize(json);
         string version = ReadString(values, "tag_name");
-        if (String.IsNullOrWhiteSpace(version)) throw new FormatException("Release 缺少 tag_name 欄位。");
+        if (String.IsNullOrWhiteSpace(version))
+        {
+            throw new FormatException(
+                AppText.Get("Release 缺少 tag_name 欄位。", "The release is missing its tag_name field."));
+        }
 
         return new RemoteVersionInfo
         {
@@ -655,7 +848,12 @@ internal static class UpdateChecker
     {
         JavaScriptSerializer serializer = new JavaScriptSerializer();
         Dictionary<string, object> values = serializer.Deserialize<Dictionary<string, object>>(json);
-        if (values == null) throw new FormatException("回應不是有效的 JSON 物件。");
+        if (values == null)
+        {
+            throw new FormatException(AppText.Get(
+                "回應不是有效的 JSON 物件。",
+                "The response is not a valid JSON object."));
+        }
         return values;
     }
 
@@ -923,10 +1121,10 @@ internal sealed class OverlaySettingsDialog : Form
     {
         settings = (initialSettings ?? new OverlaySettings()).Clone();
 
-        Text = "\u6d6e\u52d5\u63d0\u793a\u8a2d\u5b9a";
+        Text = AppText.Get("浮動提示設定", "Overlay Settings");
         BackColor = Color.FromArgb(20, 21, 23);
         ForeColor = Color.FromArgb(238, 240, 242);
-        Font = new Font("Microsoft JhengHei UI", 9F);
+        Font = new Font(AppText.FontFamily, 9F);
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
@@ -935,30 +1133,34 @@ internal sealed class OverlaySettingsDialog : Form
         ClientSize = new Size(500, 390);
         AutoScaleMode = AutoScaleMode.Dpi;
 
-        Controls.Add(MakeLabel("\u6d6e\u52d5\u63d0\u793a\u8a2d\u5b9a", 22, 18, 300, 32, 19F, ForeColor, FontStyle.Bold));
-        Controls.Add(MakeLabel("\u8abf\u6574\u4e2d\u592e\u72c0\u614b\u63d0\u793a\u7684\u984f\u8272\u8207\u900f\u660e\u5ea6\uff0c\u6309\u300c\u5957\u7528\u300d\u5f8c\u5373\u6642\u751f\u6548\u3002", 22, 52, 450, 24, 9F, Color.FromArgb(166, 170, 177)));
+        Controls.Add(MakeLabel(AppText.Get("浮動提示設定", "Overlay Settings"), 22, 18, 300, 32, 19F, ForeColor, FontStyle.Bold));
+        Controls.Add(MakeLabel(
+            AppText.Get(
+                "調整中央狀態提示的顏色與透明度，按「套用」後即時生效。",
+                "Customize the centered status overlay. Changes take effect after you click Apply."),
+            22, 52, 450, 24, 9F, Color.FromArgb(166, 170, 177)));
 
-        Controls.Add(MakeLabel("Caps Lock \u958b\u555f\u984f\u8272", 24, 100, 170, 26, 10F, ForeColor, FontStyle.Bold));
+        Controls.Add(MakeLabel(AppText.Get("Caps Lock 開啟顏色", "Caps Lock on color"), 24, 100, 170, 26, 10F, ForeColor, FontStyle.Bold));
         onColorSwatch = MakeColorSwatch(settings.OnColor);
         onColorSwatch.SetBounds(210, 96, 34, 30);
         Controls.Add(onColorSwatch);
         onColorValue = MakeLabel(ColorHex(settings.OnColor), 254, 100, 100, 26, 9F, Color.FromArgb(195, 199, 205));
         Controls.Add(onColorValue);
-        Button chooseOn = MakeButton("\u9078\u64c7\u984f\u8272", 370, 94, 104, 32, true);
+        Button chooseOn = MakeButton(AppText.Get("選擇顏色", "Choose color"), 370, 94, 104, 32, true);
         chooseOn.Click += delegate { ChooseColor(true); };
         Controls.Add(chooseOn);
 
-        Controls.Add(MakeLabel("Caps Lock \u95dc\u9589\u984f\u8272", 24, 146, 170, 26, 10F, ForeColor, FontStyle.Bold));
+        Controls.Add(MakeLabel(AppText.Get("Caps Lock 關閉顏色", "Caps Lock off color"), 24, 146, 170, 26, 10F, ForeColor, FontStyle.Bold));
         offColorSwatch = MakeColorSwatch(settings.OffColor);
         offColorSwatch.SetBounds(210, 142, 34, 30);
         Controls.Add(offColorSwatch);
         offColorValue = MakeLabel(ColorHex(settings.OffColor), 254, 146, 100, 26, 9F, Color.FromArgb(195, 199, 205));
         Controls.Add(offColorValue);
-        Button chooseOff = MakeButton("\u9078\u64c7\u984f\u8272", 370, 140, 104, 32, true);
+        Button chooseOff = MakeButton(AppText.Get("選擇顏色", "Choose color"), 370, 140, 104, 32, true);
         chooseOff.Click += delegate { ChooseColor(false); };
         Controls.Add(chooseOff);
 
-        Controls.Add(MakeLabel("\u900f\u660e\u5ea6", 24, 192, 120, 26, 10F, ForeColor, FontStyle.Bold));
+        Controls.Add(MakeLabel(AppText.Get("透明度", "Transparency"), 24, 192, 120, 26, 10F, ForeColor, FontStyle.Bold));
         transparencyTrackBar = new TrackBar
         {
             Minimum = 0,
@@ -978,28 +1180,37 @@ internal sealed class OverlaySettingsDialog : Form
         Controls.Add(transparencyTrackBar);
         transparencyValue = MakeLabel(String.Empty, 386, 192, 88, 26, 9F, Color.FromArgb(195, 199, 205), FontStyle.Regular, ContentAlignment.MiddleRight);
         Controls.Add(transparencyValue);
-        Controls.Add(MakeLabel("\u9810\u8a2d\u70ba 80% \u900f\u660e\uff08\u8996\u7a97\u4e0d\u900f\u660e\u5ea6\u7d04 20%\uff09\uff0c\u70ba\u907f\u514d\u7121\u6cd5\u627e\u56de\uff0c\u6700\u9ad8\u53ef\u8a2d 95%\u3002", 24, 226, 450, 22, 8.5F, Color.FromArgb(132, 137, 145)));
+        Controls.Add(MakeLabel(
+            AppText.Get(
+                "預設為 80% 透明（視窗不透明度約 20%），為避免無法找回，最高可設 95%。",
+                "Default: 80% transparent (about 20% window opacity); maximum 95%."),
+            24, 226, 450, 22, 8.5F, Color.FromArgb(132, 137, 145)));
 
-        Controls.Add(MakeLabel("\u986f\u793a\u6642\u9593", 24, 262, 120, 26, 10F, ForeColor, FontStyle.Bold));
+        Controls.Add(MakeLabel(AppText.Get("顯示時間", "Display duration"), 24, 262, 120, 26, 10F, ForeColor, FontStyle.Bold));
         displayDurationInput = new TextBox
         {
+            Name = "displayDurationInput",
             Text = settings.DisplayDurationSeconds.ToString(),
             MaxLength = 1,
             TextAlign = HorizontalAlignment.Center,
             BorderStyle = BorderStyle.FixedSingle,
-            BackColor = Color.FromArgb(34, 36, 40),
-            ForeColor = Color.FromArgb(238, 240, 242),
-            Font = new Font("Microsoft JhengHei UI", 9F)
+            BackColor = Color.FromArgb(250, 250, 250),
+            ForeColor = Color.FromArgb(24, 27, 32),
+            Font = new Font("Segoe UI", 11F, FontStyle.Bold),
+            Cursor = Cursors.IBeam,
+            TabStop = true
         };
-        displayDurationInput.SetBounds(130, 256, 76, 30);
+        displayDurationInput.SetBounds(150, 252, 82, 34);
         displayDurationInput.KeyPress += delegate(object sender, KeyPressEventArgs e)
         {
             if (!Char.IsControl(e.KeyChar) && !Char.IsDigit(e.KeyChar)) e.Handled = true;
         };
         Controls.Add(displayDurationInput);
-        Controls.Add(MakeLabel("\u79d2\uff08\u9810\u8a2d 3 \u79d2\uff0c\u53ef\u8a2d 1\u20135 \u79d2\uff09", 218, 262, 256, 26, 9F, Color.FromArgb(195, 199, 205)));
+        Controls.Add(MakeLabel(
+            AppText.Get("秒（預設 3 秒，可設 1–5 秒）", "seconds (default 3, range 1-5)"),
+            244, 262, 230, 26, 9F, Color.FromArgb(195, 199, 205)));
 
-        Button reset = MakeButton("\u6062\u5fa9\u9810\u8a2d", 24, 326, 104, 34, false);
+        Button reset = MakeButton(AppText.Get("恢復預設", "Reset defaults"), 24, 326, 104, 34, false);
         reset.Click += delegate
         {
             settings.Reset();
@@ -1010,11 +1221,11 @@ internal sealed class OverlaySettingsDialog : Form
         };
         Controls.Add(reset);
 
-        Button cancel = MakeButton("\u53d6\u6d88", 302, 326, 80, 34, false);
+        Button cancel = MakeButton(AppText.Get("取消", "Cancel"), 302, 326, 80, 34, false);
         cancel.DialogResult = DialogResult.Cancel;
         Controls.Add(cancel);
 
-        Button apply = MakeButton("\u5957\u7528", 390, 326, 84, 34, true);
+        Button apply = MakeButton(AppText.Get("套用", "Apply"), 390, 326, 84, 34, true);
         apply.Click += delegate
         {
             int duration;
@@ -1024,8 +1235,8 @@ internal sealed class OverlaySettingsDialog : Form
             {
                 MessageBox.Show(
                     this,
-                    "顯示時間請輸入 1 到 5 之間的整數。",
-                    "浮動提示設定",
+                    AppText.Get("顯示時間請輸入 1 到 5 之間的整數。", "Enter a whole number from 1 to 5 for the display duration."),
+                    AppText.Get("浮動提示設定", "Overlay Settings"),
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
                 displayDurationInput.Focus();
@@ -1068,7 +1279,7 @@ internal sealed class OverlaySettingsDialog : Form
 
     private void UpdateTransparencyValue()
     {
-        transparencyValue.Text = "\u900f\u660e " + settings.TransparencyPercent + "%";
+        transparencyValue.Text = AppText.Get("透明 " + settings.TransparencyPercent + "%", "Transparency " + settings.TransparencyPercent + "%");
     }
 
     private static Panel MakeColorSwatch(Color color)
@@ -1091,7 +1302,7 @@ internal sealed class OverlaySettingsDialog : Form
             Text = text,
             ForeColor = color,
             BackColor = Color.Transparent,
-            Font = new Font("Microsoft JhengHei UI", size, style),
+            Font = new Font(AppText.FontFamily, size, style),
             AutoSize = false,
             TextAlign = alignment
         };
@@ -1124,10 +1335,10 @@ internal sealed class SupportDialog : Form
 
     public SupportDialog()
     {
-        Text = "\u652f\u6301\u958b\u767c";
+        Text = AppText.Get("支持開發", "Support Development");
         BackColor = Color.FromArgb(20, 21, 23);
         ForeColor = Color.FromArgb(238, 240, 242);
-        Font = new Font("Microsoft JhengHei UI", 9F);
+        Font = new Font(AppText.FontFamily, 9F);
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
         MinimizeBox = false;
@@ -1137,15 +1348,19 @@ internal sealed class SupportDialog : Form
         AutoScaleMode = AutoScaleMode.Dpi;
         toolTip = new ToolTip();
 
-        Controls.Add(MakeLabel("\u81ea\u9858\u652f\u6301", 16, 14, 160, 20, 9F, Color.FromArgb(82, 201, 151), FontStyle.Bold));
-        Controls.Add(MakeLabel("\u652f\u6301\u958b\u767c", 16, 36, 300, 36, 20F, ForeColor, FontStyle.Bold));
-        Controls.Add(MakeLabel("\u5982\u679c\u9019\u500b\u5c0f\u5de5\u5177\u5c0d\u4f60\u6709\u5e6b\u52a9\uff0c\u53ef\u4ee5\u652f\u6301\u5f8c\u7e8c\u7dad\u8b77\u8207\u6539\u5584\u3002", 16, 78, 580, 24, 10F, Color.FromArgb(166, 170, 177)));
+        Controls.Add(MakeLabel(AppText.Get("自願支持", "Voluntary Support"), 16, 14, 160, 20, 9F, Color.FromArgb(82, 201, 151), FontStyle.Bold));
+        Controls.Add(MakeLabel(AppText.Get("支持開發", "Support Development"), 16, 36, 300, 36, 20F, ForeColor, FontStyle.Bold));
+        Controls.Add(MakeLabel(
+            AppText.Get(
+                "如果這個小工具對你有幫助，可以支持後續維護與改善。",
+                "If this tool helps you, you can support its ongoing maintenance and improvement."),
+            16, 78, 580, 24, 10F, Color.FromArgb(166, 170, 177)));
 
         Panel koFi = CreateCard(Color.FromArgb(19, 39, 35), Color.FromArgb(39, 111, 91), 16, 112, 588, 62);
         koFi.Controls.Add(MakeLabel("\u2615", 16, 13, 34, 32, 17F, Color.White, FontStyle.Regular));
-        koFi.Controls.Add(MakeLabel("\u900f\u904e Ko-fi \u652f\u6301", 58, 9, 280, 24, 12F, ForeColor, FontStyle.Bold));
-        koFi.Controls.Add(MakeLabel("\u524d\u5f80\u5b87\u822a\u8c93\u7684 Ko-fi \u9801\u9762", 58, 35, 330, 18, 9F, Color.FromArgb(155, 161, 168)));
-        Button open = MakeButton("\u958b\u555f \u2197", 486, 15, 86, 32, true);
+        koFi.Controls.Add(MakeLabel(AppText.Get("透過 Ko-fi 支持", "Support via Ko-fi"), 58, 9, 280, 24, 12F, ForeColor, FontStyle.Bold));
+        koFi.Controls.Add(MakeLabel(AppText.Get("前往宇航貓的 Ko-fi 頁面", "Open Minz's Ko-fi page"), 58, 35, 330, 18, 9F, Color.FromArgb(155, 161, 168)));
+        Button open = MakeButton(AppText.Get("開啟 \u2197", "Open \u2197"), 486, 15, 86, 32, true);
         open.Click += delegate { OpenUrl(KoFiUrl); };
         koFi.Controls.Add(open);
         koFi.Cursor = Cursors.Hand;
@@ -1156,9 +1371,17 @@ internal sealed class SupportDialog : Form
         Controls.Add(CreateWalletCard("USDT | TRC20", "TRON", Trc20Address, 322, 188));
 
         Panel warning = CreateCard(Color.FromArgb(42, 36, 20), Color.FromArgb(144, 103, 26), 16, 314, 588, 30);
-        warning.Controls.Add(MakeLabel("\u8f49\u5e33\u524d\u8acb\u518d\u6b21\u78ba\u8a8d\uff1a\u50c5\u63a5\u53d7\u4e0a\u65b9\u6a19\u793a\u7db2\u8def\u7684 USDT\uff0c\u5efa\u8b70\u5148\u5c0f\u984d\u6e2c\u8a66\u3002", 12, 5, 564, 20, 8.5F, Color.FromArgb(238, 181, 43), FontStyle.Bold));
+        warning.Controls.Add(MakeLabel(
+            AppText.Get(
+                "轉帳前請再次確認：僅接受上方標示網路的 USDT，建議先小額測試。",
+                "Before sending funds, verify the network above; test with a small amount first."),
+            12, 5, 564, 20, 8.5F, Color.FromArgb(238, 181, 43), FontStyle.Bold));
         Controls.Add(warning);
-        Controls.Add(MakeLabel("\u652f\u6301\u4e0d\u5f71\u97ff Caps Lock \u72c0\u614b\u5075\u6e2c\u6216\u4efb\u4f55\u7a0b\u5f0f\u529f\u80fd\u3002", 16, 344, 588, 16, 8F, Color.FromArgb(115, 119, 126), FontStyle.Regular, ContentAlignment.MiddleCenter));
+        Controls.Add(MakeLabel(
+            AppText.Get(
+                "支持不影響 Caps Lock 狀態偵測或任何程式功能。",
+                "Support does not affect Caps Lock detection or any program functionality."),
+            16, 344, 588, 16, 8F, Color.FromArgb(115, 119, 126), FontStyle.Regular, ContentAlignment.MiddleCenter));
     }
 
     private Panel CreateWalletCard(string title, string network, string address, int x, int y)
@@ -1170,18 +1393,22 @@ internal sealed class SupportDialog : Form
         addressLabel.AutoEllipsis = true;
         toolTip.SetToolTip(addressLabel, address);
         card.Controls.Add(addressLabel);
-        Button copy = MakeButton("\u8907\u88fd\u5730\u5740", 14, 79, 100, 27, false);
+        Button copy = MakeButton(AppText.Get("複製地址", "Copy address"), 14, 79, 100, 27, false);
         copy.Click += delegate
         {
             try
             {
                 Clipboard.SetText(address);
-                toolTip.Show("\u5df2\u8907\u88fd", copy, 1000);
+                toolTip.Show(AppText.Get("已複製", "Copied"), copy, 1000);
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, "\u7121\u6cd5\u8907\u88fd\u5730\u5740\uff0c\u8acb\u7a0d\u5f8c\u518d\u8a66\u3002" + Environment.NewLine + ex.Message,
-                    "\u652f\u6301\u958b\u767c", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(this,
+                    AppText.Get("無法複製地址，請稍後再試。", "Unable to copy the address. Please try again later.") +
+                        Environment.NewLine + ex.Message,
+                    AppText.Get("支持開發", "Support Development"),
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
             }
         };
         card.Controls.Add(copy);
@@ -1210,7 +1437,7 @@ internal sealed class SupportDialog : Form
             Text = text,
             ForeColor = color,
             BackColor = Color.Transparent,
-            Font = new Font("Microsoft JhengHei UI", size, style),
+            Font = new Font(AppText.FontFamily, size, style),
             AutoSize = false,
             TextAlign = alignment
         };
@@ -1241,8 +1468,13 @@ internal sealed class SupportDialog : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show("\u7121\u6cd5\u958b\u555f\u700f\u89bd\u5668\uff0c\u7db2\u5740\u70ba\uff1a" + Environment.NewLine + url + Environment.NewLine + ex.Message,
-                "\u652f\u6301\u958b\u767c", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(
+                AppText.Get("無法開啟瀏覽器，網址為：" + Environment.NewLine,
+                    "Unable to open the browser. URL:" + Environment.NewLine) +
+                    url + Environment.NewLine + ex.Message,
+                AppText.Get("支持開發", "Support Development"),
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
         }
     }
 

@@ -1,5 +1,5 @@
 {
-  "version": "1.2.0",
+  "version": "1.3.0",
   "downloadUrl": "https://github.com/Bserz1331/caps-lock-indicator/releases/latest",
-  "notes": "Added overlay color and transparency settings plus GitHub update checking."
+  "notes": "Added system-language detection and a Traditional Chinese/English language switch."
 }
