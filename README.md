@@ -15,6 +15,7 @@ CapsLock/
 ├─ CapsLockIndicator.exe              ← 主程式
 ├─ 啟動 Caps Lock 指示器.bat          ← 快速啟動
 ├─ README.md                           ← 本說明
+├─ version.json                        ← 更新檢查用版本資訊
 ├─ src/CapsLockIndicator.cs            ← 原始碼
 ├─ scripts/CapsLockIndicator.ps1       ← PowerShell 相容啟動腳本
 └─ assets/                             ← 圖示與預覽圖
@@ -24,13 +25,15 @@ CapsLock/
 
 雙擊 `CapsLockIndicator.exe`，或雙擊 `啟動 Caps Lock 指示器.bat`。
 
-- 程式只顯示在 Windows 工作列右下角的通知區，不會出現浮動視窗
-- 通知區圖示右下角的圓點：綠色代表 Caps Lock 開啟，灰色代表關閉
+- 平時只顯示在 Windows 工作列右下角的通知區；按下 Caps Lock 時會在目前螢幕中央顯示狀態提示
+- 通知區圖示顯示大寫 `A`（綠底）代表 Caps Lock 開啟，小寫 `a`（灰底）代表關閉
+- 中央狀態提示預設為 80% 透明（視窗不透明度約 20%），固定在最前面，預設 3 秒後自動關閉，而且滑鼠可以穿透
 - 將滑鼠移到圖示上，可看到「Caps Lock：開啟／關閉」提示
 - 在通知區圖示上按右鍵，可重新整理狀態或結束工具
+- 在通知區圖示上按右鍵，開啟「浮動提示設定…」即可調整開啟／關閉顏色、透明度與顯示時間（1～5 秒）；設定會保存到目前 Windows 使用者
+- 在通知區圖示上按右鍵，選擇「檢查更新」即可從 GitHub 取得版本資訊；程式不會自動下載或安裝
 - 在通知區圖示上按右鍵，勾選「開機啟動」即可讓工具在登入 Windows 後自動執行；再次點擊可取消
 - 如果圖示被 Windows 收進 `^` 隱藏圖示區，可將它拖曳到工作列上
 
 「開機啟動」只會設定目前 Windows 使用者，不需要管理員權限。
-
 如果 Windows 顯示 SmartScreen 提示，請先選擇「其他資訊」，再選擇「仍要執行」。這是未經數位簽章的本機工具常見提示。
